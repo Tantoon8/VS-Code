@@ -1,8 +1,202 @@
-https://candidatelaunchst.onvue.com/?locale=en-US&access_code=681137321&chat=false&session_id=33911934
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows;
+using Newtonsoft.Json;
 
-https://home.pearsonvue.com/Clients/Microsoft/Online-proctored.aspx
+namespace Ninga_Middleware
+{
+    public partial class UnifierBP : Window
+    {
+        private const string LOGIN_URL = "http://192.168.1.190:7001/ws/rest/service/v1/login";
+        private const string DATA_ELEMENTS_URL = "http://192.168.1.190:7001/ws/rest/service/v1/ds/data-elements";
 
-https://home.pearsonvue.com/
+        public UnifierBP()
+        {
+            InitializeComponent();
+        }
 
-https://wsr.pearsonvue.com/testtaker/registration/Dashboard.htm?_gl=&conversationId=204547#
+        // Login Method
+        private async Task<string> LoginAsync()
+        {
+            try
+            {
+                string userName = "$$OCCMO";
+                string userPassword = "primavera321";
 
+                using (HttpClient httpClient = new HttpClient())
+                {
+                    var requestMessage = new HttpRequestMessage(HttpMethod.Get, LOGIN_URL);
+                    var authenticationString = $"{userName}:{userPassword}";
+                    var base64EncodedAuthenticationString = Convert.ToBase64String(Encoding.ASCII.GetBytes(authenticationString));
+                    requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Basic", base64EncodedAuthenticationString);
+
+                    var response = await httpClient.SendAsync(requestMessage);
+                    string responseContent = await response.Content.ReadAsStringAsync();
+
+                    // Log the response to debug
+                    MessageBox.Show($"Login Response: {responseContent}", "Login Response Debug", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        LoginResponseData loginResponse = JsonConvert.DeserializeObject<LoginResponseData>(responseContent);
+                        if (loginResponse?.token != null)
+                        {
+                            txtunifierget.Text = loginResponse.token; // Ensure token is set in the textbox
+                            return loginResponse.token;
+                        }
+                        else
+                        {
+                            MessageBox.Show("No token found in the login response", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    }
+                    else
+                    {
+                        MessageBox.Show($"Login failed with status: {response.StatusCode}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error during login: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            return null;
+        }
+
+        // Method to fetch data elements
+        private async Task<List<DataElement>> GetDataElements(string token)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                    // Modify the filter for testing. Use any specific filter you believe should return results
+                    var filter = new
+                    {
+                        data_element = "",
+                        data_definition = "Decimal Amount",  // Change to match your expected data
+                        form_label = "",
+                        description = "",
+                        tooltip = ""
+                    };
+
+                    string jsonBody = JsonConvert.SerializeObject(filter);
+                    StringContent content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+                    // Log the request body to check
+                    MessageBox.Show($"Request Payload: {jsonBody}", "Request Debug", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    HttpResponseMessage response = await client.PostAsync(DATA_ELEMENTS_URL, content);
+                    string responseContent = await response.Content.ReadAsStringAsync();
+
+                    // Log the response for debugging purposes
+                    MessageBox.Show($"Response Status: {response.StatusCode}\nResponse Content: {responseContent}", "Response Debug", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var jsonResponse = JsonConvert.DeserializeObject<dynamic>(responseContent);
+                        var data = jsonResponse.data;
+
+                        // Check if data exists in the response
+                        if (data != null && data is Newtonsoft.Json.Linq.JArray)
+                        {
+                            return data.ToObject<List<DataElement>>();
+                        }
+                        else
+                        {
+                            MessageBox.Show("No data returned or data format is incorrect", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    }
+                    else
+                    {
+                        MessageBox.Show($"Failed to fetch data elements. Status: {response.StatusCode}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error occurred while fetching data elements: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            return null;
+        }
+
+        // Button click event to fetch elements
+        private async void FetchElements_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string token = txtunifierget.Text; // Get token from the textbox
+
+                // Log the token to verify it's passed correctly
+                MessageBox.Show($"Token being used: {token}", "Token Debug", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                // If no token, initiate login
+                if (string.IsNullOrEmpty(token))
+                {
+                    MessageBox.Show("Token is missing. Logging in now...", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                    token = await LoginAsync();
+
+                    if (string.IsNullOrEmpty(token))
+                    {
+                        MessageBox.Show("Login failed. Please try again.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
+
+                    MessageBox.Show($"Token retrieved after login: {token}", "Login Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
+                // Fetch data elements using the token
+                List<DataElement> dataElements = await GetDataElements(token);
+
+                // If data elements are found, populate ListBox
+                if (dataElements != null && dataElements.Count > 0)
+                {
+                    unifierElements.Items.Clear();
+                    foreach (var element in dataElements)
+                    {
+                        unifierElements.Items.Add(element.ToString());
+                    }
+
+                    MessageBox.Show($"Successfully fetched {dataElements.Count} data elements!", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    MessageBox.Show("No data elements found. Please adjust your filter and try again.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error occurred: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // Login response data class
+        public class LoginResponseData
+        {
+            public string token { get; set; }
+        }
+
+        // Data element class definition (Move this class here if not already defined)
+        public class DataElement
+        {
+            public string data_element { get; set; }
+            public string data_definition { get; set; }
+            public string form_label { get; set; }
+            public string description { get; set; }
+            public string tooltip { get; set; }
+
+            public override string ToString()
+            {
+                return $"{data_element} - {data_definition} ({form_label})";
+            }
+        }
+    }
+}
